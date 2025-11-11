@@ -1,0 +1,92 @@
+version: '3.8'
+
+name: devops-lab4
+
+services:
+  # База данных PostgreSQL
+  database:
+    image: postgres:15
+    container_name: postgres_db
+    environment:
+      POSTGRES_DB: myapp
+      POSTGRES_USER: appuser
+      POSTGRES_PASSWORD: password123
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - backend
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U appuser -d myapp"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Бэкенд приложение (Flask)
+  backend:
+    build: 
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: flask_backend
+    environment:
+      DATABASE_URL: postgresql://appuser:password123@database:5432/myapp
+      FLASK_ENV: production
+    ports:
+      - "5000:5000"
+    depends_on:
+      database:
+        condition: service_healthy
+    networks:
+      - backend
+      - frontend
+    volumes:
+      - backend_logs:/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Фронтенд (Nginx)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: nginx_frontend
+    ports:
+      - "8181:80"
+    depends_on:
+      - backend
+    networks:
+      - frontend
+    restart: unless-stopped
+
+  # Webhook обработчик
+  webhook:
+    build:
+      context: ./webhook
+      dockerfile: Dockerfile
+    container_name: webhook_handler
+    ports:
+      - "8080:8080"
+    environment:
+      - WEBHOOK_SECRET=your-secret-here
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - frontend
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+  backend_logs:
+    driver: local
+
+networks:
+  frontend:
+    driver: bridge
+  backend:
+    driver: bridge
